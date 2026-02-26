@@ -25,6 +25,11 @@ else:
 DATASET_FILE = "dataset.xlsx"
 OUTPUT_DIR = BASE_DIR
 
+# =========================================================
+# ✅ VERSIÓN ÚNICA (UI + PDF + EXCEL)
+# =========================================================
+APP_VERSION = "7.64"
+
 
 # =========================================================
 # ⭐ ALGORITMO CORREGIDO (SIEMPRE A FAVOR, PERO SIN PASARSE)
@@ -128,7 +133,7 @@ def cargar_dataset():
     if "REQUISITOS" not in df.columns:
         df["REQUISITOS"] = ""
 
-    # ✅ NORMALIZACIÓN CLAVE para que el filtro no falle por espacios/formatos
+    # ✅ Normalización clave
     df["CARRERA"] = df["CARRERA"].astype(str).str.strip().str.upper()
     df["UNID. NEGOCIO"] = df["UNID. NEGOCIO"].astype(str).str.strip().str.upper()
 
@@ -302,7 +307,7 @@ def _footer_pdf(c, plan_estudios: str, y_referencia: float):
 
     c.setFont("Helvetica", 8)
     c.drawString(40, 25, "UNIVERSIDAD PRIVADA DEL NORTE S.A.C.")
-    c.drawRightString(width - 40, 25, "Versión Conva2025G : 7.63")
+    c.drawRightString(width - 40, 25, f"Versión Conva2025G : {APP_VERSION}")  # ✅ version única
 
 
 # ============================
@@ -400,8 +405,35 @@ def main(page: ft.Page):
         page.add(ft.Text(f"Error cargando dataset: {e}", color="red", size=16, weight=ft.FontWeight.BOLD))
         return
 
-    # ✅ listas ya normalizadas
     carreras = sorted(df_base["CARRERA"].dropna().unique().tolist())
+
+    # ✅ AppBar profesional con versión (AppBar control) :contentReference[oaicite:2]{index=2}
+    page.appbar = ft.AppBar(
+        title=ft.Column(
+            spacing=0,
+            controls=[
+                ft.Text("Proyección Malla Curricular UPN", weight=ft.FontWeight.BOLD),
+                ft.Text("Sistema de convalidación y proyección de cursos", size=12, color=ft.Colors.WHITE70),
+            ],
+        ),
+        center_title=False,
+        bgcolor="#0B3A6A",
+        actions=[
+            ft.Container(
+                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                bgcolor="#FFFFFF",
+                border_radius=18,
+                content=ft.Row(
+                    tight=True,
+                    spacing=6,
+                    controls=[
+                        ft.Icon(ft.Icons.VERIFIED, size=16, color="#0B3A6A"),
+                        ft.Text(f"v{APP_VERSION}", size=12, weight=ft.FontWeight.BOLD, color="#0B3A6A"),
+                    ],
+                ),
+            )
+        ],
+    )
 
     # Campos
     nombres_field = ft.TextField(label="Nombre(s)", width=300)
@@ -448,8 +480,6 @@ def main(page: ft.Page):
     crd_field = ft.TextField(label="CRD (créditos a convalidar)", width=250, keyboard_type=ft.KeyboardType.NUMBER)
 
     carrera_dd = ft.Dropdown(label="Carrera", options=[ft.dropdown.Option(c) for c in carreras], width=520)
-
-    # ✅ importante: unidad inicia deshabilitada hasta cargar opciones
     unidad_dd = ft.Dropdown(label="Unidad de Negocio", options=[], width=520, disabled=True)
 
     resumen_text = ft.Text("", size=14)
@@ -494,7 +524,6 @@ def main(page: ft.Page):
             rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(row.get(col, "")))) for _, col in columnas]))
         return ft.DataTable(columns=cols, rows=rows, column_spacing=20, horizontal_margin=10)
 
-    # ✅ handler robusto (se usa en on_select y on_change)
     def cargar_unidades_por_carrera():
         unidad_dd.value = None
         unidad_dd.options = []
@@ -505,13 +534,13 @@ def main(page: ft.Page):
             return
 
         carrera_sel = str(carrera_dd.value).strip().upper()
-
         df_tmp = df_base[df_base["CARRERA"] == carrera_sel].copy()
+
         unidades = sorted([u for u in df_tmp["UNID. NEGOCIO"].dropna().unique().tolist() if str(u).strip() != ""])
 
         if not unidades:
             page.snack_bar = ft.SnackBar(
-                ft.Text(f"No se encontraron Unidades para la carrera: {carrera_sel}. Revisa espacios/valores en dataset."),
+                ft.Text(f"No se encontraron Unidades para la carrera: {carrera_sel}. Revisa dataset."),
                 bgcolor=ft.Colors.RED,
             )
             page.snack_bar.open = True
@@ -522,12 +551,12 @@ def main(page: ft.Page):
         unidad_dd.disabled = False
         page.update()
 
-    # ✅ eventos: Dropdown en docs usa on_select :contentReference[oaicite:1]{index=1}
+    # Dropdown: on_select recomendado para selección :contentReference[oaicite:3]{index=3}
     def on_carrera_event(e):
         cargar_unidades_por_carrera()
 
-    carrera_dd.on_select = on_carrera_event   # ✅ principal
-    carrera_dd.on_change = on_carrera_event   # ✅ respaldo
+    carrera_dd.on_select = on_carrera_event
+    carrera_dd.on_change = on_carrera_event  # respaldo
 
     def limpiar_click(e):
         nombres_field.value = ""
@@ -544,7 +573,6 @@ def main(page: ft.Page):
         crd_field.value = ""
         carrera_dd.value = None
 
-        # ✅ reset unidad
         unidad_dd.value = None
         unidad_dd.options = []
         unidad_dd.disabled = True
@@ -666,6 +694,7 @@ def main(page: ft.Page):
         df_form = pd.DataFrame(
             {
                 "Campo": [
+                    "Versión App",
                     "Fecha/Hora",
                     "Apellidos y Nombres",
                     "Código de estudiante",
@@ -682,6 +711,7 @@ def main(page: ft.Page):
                     "Cargo Resp. Académico",
                 ],
                 "Valor": [
+                    APP_VERSION,
                     ahora,
                     alumno_fmt,
                     codigo_field.value,
@@ -762,6 +792,7 @@ def main(page: ft.Page):
     copiar_btn = ft.ElevatedButton("Copiar Matriculables", icon=ft.Icons.COPY, on_click=copiar_tabla_click, height=56, width=300, style=btn_style("#0F766E"))
     limpiar_btn = ft.ElevatedButton("Nueva Convalidación", icon=ft.Icons.DELETE_SWEEP, on_click=limpiar_click, height=56, width=300, style=btn_style("#DC2626"))
 
+    # Card control (para look profesional) :contentReference[oaicite:4]{index=4}
     page.add(
         ft.Container(
             width=980,
@@ -769,8 +800,6 @@ def main(page: ft.Page):
             content=ft.Column(
                 spacing=12,
                 controls=[
-                    ft.Text("Proyección Malla Curricular UPN", size=22, weight=ft.FontWeight.BOLD),
-                    ft.Text("⚠️ Todos los campos del formulario deben ser llenados antes de procesar.", size=12, color=ft.Colors.RED),
                     ft.Card(
                         elevation=2,
                         content=ft.Container(
@@ -801,7 +830,8 @@ def main(page: ft.Page):
                     ft.Divider(),
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.CONTACT_PAGE, size=18, color="#555555"),
+                            ft.Text(f"Versión: v{APP_VERSION}", size=11, color="#555555"),
+                            ft.Text(" | ", size=11, color="#555555"),
                             ft.Text("Elaborado por: Ing. Jesús Apolaya", size=11, italic=True, color="#555555"),
                         ],
                         alignment=ft.MainAxisAlignment.END,
