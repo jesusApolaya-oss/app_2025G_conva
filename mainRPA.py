@@ -172,6 +172,7 @@ REQUIRED_INPUT_COLS_CANON = [
     "CARRERA",
     "UNIDAD DE NEGOCIO",
     "CRD",
+    # "GRUPO"  # <- NO obligatoria (si falta, se usa SIN_GRUPO)
 ]
 
 SYNONYMS = {
@@ -184,6 +185,7 @@ SYNONYMS = {
     ],
     "UNIDAD DE NEGOCIO": ["UNIDAD DE NEGOCIO", "UNIDAD NEGOCIO", "UNIDAD"],
     "PLAN DE ESTUDIOS": ["PLAN DE ESTUDIOS", "PLAN ESTUDIOS", "PLAN"],
+    "GRUPO": ["GRUPO", "GROUP", "COHORTE", "SECCION", "SECCIÓN"],
 }
 
 def _canon(s: str) -> str:
@@ -401,7 +403,7 @@ def _footer_pdf(c, plan_estudios: str, y_referencia: float):
 
     c.setFont("Helvetica", 8)
     c.drawString(40, 25, "UNIVERSIDAD PRIVADA DEL NORTE S.A.C.")
-    c.drawRightString(width - 40, 25, "Versión Conva2025G : 7.63")
+    c.drawRightString(width - 40, 25, "Versión Conva2025G : 7.64.1")
 
 
 def generar_pdf_convalidados(
@@ -596,7 +598,7 @@ def main(page: ft.Page):
         # Log columnas reales detectadas
         log(f"Columnas detectadas: {list(df_in.columns)}")
 
-        # Validar columnas
+        # Validar columnas obligatorias
         ensure_required_cols(df_in)
 
         total = len(df_in)
@@ -607,16 +609,23 @@ def main(page: ft.Page):
         ok_count = 0
         err_count = 0
 
+        # ✅ NUEVO: acumuladores de fallos
+        failed_codes = []
+        failed_details = []  # (codigo, error)
+
         for i, row in df_in.iterrows():
             idx = i + 1
             progress.value = idx / total
             status_text.value = f"Procesando {idx}/{total}..."
             page.update()
 
+            # Pre-lectura para tener "codigo" disponible también en errores
+            codigo_pre = get_cell(row, "COD ESTUDIANTE", default="").strip()
+
             try:
                 nombre = get_cell(row, "NOMBRE")
                 apellido = get_cell(row, "APELLIDO")
-                codigo = get_cell(row, "COD ESTUDIANTE")
+                codigo = codigo_pre
                 sede = get_cell(row, "SEDE")
                 plan = get_cell(row, "PLAN DE ESTUDIOS")
                 carrera = get_cell(row, "CARRERA")
@@ -628,17 +637,26 @@ def main(page: ft.Page):
 
                 # Si quieres nombres también en el excel, agrega columnas:
                 # "Nombre elaborado por" y "Nombre resp. Académico"
-                # y aquí las leemos (si no existen, quedará vacío)
                 nombre_elab = get_cell(row, "NOMBRE ELABORADO POR", default="")
                 nombre_resp = get_cell(row, "NOMBRE RESP ACADEMICO", default="")
+
+                # ✅ NUEVO: Grupo (no obligatorio)
+                grupo_raw = get_cell(row, "GRUPO", default="SIN_GRUPO")
+                grupo = safe_filename(grupo_raw) if grupo_raw else "SIN_GRUPO"
+                if not grupo:
+                    grupo = "SIN_GRUPO"
 
                 if not codigo:
                     raise ValueError("COD ESTUDIANTE vacío")
 
                 alumno_fmt = formatear_apellidos_nombres(apellido, nombre)
 
+                # ✅ NUEVO: estructura por grupo: out_root/grupo/<alumno>/
+                out_group = os.path.join(out_root, grupo)
+                os.makedirs(out_group, exist_ok=True)
+
                 folder_name = safe_filename(f"{codigo}_{apellido}_{nombre}")
-                out_student = os.path.join(out_root, folder_name)
+                out_student = os.path.join(out_group, folder_name)
                 os.makedirs(out_student, exist_ok=True)
 
                 df_conva = df_base_norm[
@@ -693,13 +711,47 @@ def main(page: ft.Page):
                 )
 
                 ok_count += 1
-                log(f"✅ {idx}/{total} OK - {codigo} - {alumno_fmt}")
+                log(f"✅ {idx}/{total} OK - {codigo} - {alumno_fmt} | Grupo={grupo}")
 
             except Exception as ex:
                 err_count += 1
-                log(f"❌ {idx}/{total} ERROR - {get_cell(row, 'COD ESTUDIANTE')} -> {ex}")
+
+                # ✅ NUEVO: guardar códigos fallidos
+                cod_err = codigo_pre or "(SIN_CODIGO)"
+                failed_codes.append(cod_err)
+                failed_details.append((cod_err, str(ex)))
+
+                log(f"❌ {idx}/{total} ERROR - {cod_err} -> {ex}")
 
         progress.value = 1
+
+        # ✅ NUEVO: resumen final de fallos
+        if failed_codes:
+            # únicos, en orden
+            seen = set()
+            failed_unique = []
+            for c in failed_codes:
+                if c not in seen:
+                    seen.add(c)
+                    failed_unique.append(c)
+
+            log("────────────────────────────────────────────")
+            log(f"⚠️ CÓDIGOS FALLIDOS ({len(failed_unique)}): {', '.join(failed_unique)}")
+
+            # archivo txt para copiar rápido
+            try:
+                txt_path = os.path.join(out_root, "FALLIDOS.txt")
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write("CÓDIGOS FALLIDOS:\n")
+                    for c in failed_unique:
+                        f.write(f"{c}\n")
+                    f.write("\nDETALLE:\n")
+                    for c, err in failed_details:
+                        f.write(f"- {c}: {err}\n")
+                log(f"📄 Se generó: {txt_path}")
+            except Exception as ex_txt:
+                log(f"⚠️ No se pudo escribir FALLIDOS.txt: {ex_txt}")
+
         status_text.value = f"Proceso finalizado. OK={ok_count} | ERROR={err_count}"
         page.update()
 
@@ -729,7 +781,7 @@ def main(page: ft.Page):
                     ft.Text("UPN - Proyección Malla (Masivo desde Excel) - SOLO PDF", size=20, weight=ft.FontWeight.BOLD),
                     ft.Text(
                         "Excel requerido: Nombre | Apellido | Cod estudiante | Sede | Plan de estudios | "
-                        "Cargo elaborado por | Cargo resp. Académico | Carrera | Unidad de negocio | CRD",
+                        "Cargo elaborado por | Cargo resp. Académico | Carrera | Unidad de negocio | CRD | (Opcional: Grupo)",
                         size=12,
                         color="#555555",
                     ),
