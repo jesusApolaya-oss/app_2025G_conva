@@ -1,7 +1,3 @@
-# ============================
-# BLOQUE 1 / 4
-# IMPORTS + CONFIG + ALGORITMO
-# ============================
 import flet as ft
 import pandas as pd
 import re
@@ -34,15 +30,6 @@ OUTPUT_DIR = BASE_DIR
 # ⭐ ALGORITMO CORREGIDO (SIEMPRE A FAVOR, PERO SIN PASARSE)
 # =========================================================
 def _subset_best_between(df: pd.DataFrame, min_needed: int, max_allowed: int):
-    """
-    Devuelve (indices, suma) de una combinación que:
-    - suma <= max_allowed
-    - si existe suma >= min_needed: elige la MENOR suma (mínimo exceso)
-    - si no existe: elige la MAYOR suma < min_needed (lo más cercano por debajo)
-
-    Importante:
-    - Si df está ordenado por CR desc, este DP tenderá a elegir cursos grandes primero en empates.
-    """
     if df.empty or max_allowed <= 0:
         return [], 0
 
@@ -65,24 +52,15 @@ def _subset_best_between(df: pd.DataFrame, min_needed: int, max_allowed: int):
 
     sums = sorted(dp.keys())
 
-    # 1) menor suma que cumpla el mínimo
     for s in sums:
         if s >= max(0, min_needed) and s <= max_allowed:
             return dp[s], s
 
-    # 2) si no se puede, tomar la mayor posible por debajo
     best = max(sums) if sums else 0
     return dp.get(best, []), best
 
 
 def seleccionar_convalidacion(df_conva: pd.DataFrame, crd: float, tolerancia: int = 2):
-    """
-    Selección SECUENCIAL por ciclo:
-    - Primero ciclo 1, luego ciclo 2, luego 3, luego 4...
-    - Solo pasas al siguiente ciclo si NO alcanzas CRD con lo acumulado.
-    - Límite máximo total: CRD + tolerancia (ej. +2).
-    - Dentro de cada ciclo: CR orden desc.
-    """
     if df_conva.empty:
         return [], 0
 
@@ -101,7 +79,6 @@ def seleccionar_convalidacion(df_conva: pd.DataFrame, crd: float, tolerancia: in
     suma_total = 0
 
     for ciclo in ciclos_disponibles:
-        # Si ya llegamos al CRD, NO seguir
         if suma_total >= crd_int:
             break
 
@@ -114,11 +91,7 @@ def seleccionar_convalidacion(df_conva: pd.DataFrame, crd: float, tolerancia: in
         df_ciclo = df[df["CICLO_NUM"] == ciclo].copy()
         df_ciclo = df_ciclo.sort_values(by="CR", ascending=False)
 
-        sel_c, suma_c = _subset_best_between(
-            df=df_ciclo,
-            min_needed=min_restante,
-            max_allowed=max_restante
-        )
+        sel_c, suma_c = _subset_best_between(df=df_ciclo, min_needed=min_restante, max_allowed=max_restante)
 
         if suma_c <= 0:
             continue
@@ -155,6 +128,10 @@ def cargar_dataset():
     if "REQUISITOS" not in df.columns:
         df["REQUISITOS"] = ""
 
+    # ✅ NORMALIZACIÓN CLAVE para que el filtro no falle por espacios/formatos
+    df["CARRERA"] = df["CARRERA"].astype(str).str.strip().str.upper()
+    df["UNID. NEGOCIO"] = df["UNID. NEGOCIO"].astype(str).str.strip().str.upper()
+
     return df
 
 
@@ -169,6 +146,8 @@ def formatear_apellidos_nombres(apellidos: str, nombres: str) -> str:
     if ap and nm:
         return f"{ap}, {nm}"
     return ap or nm
+
+
 # ============================
 # BLOQUE 2 / 4
 # LÓGICA ACADÉMICA + PDF HELPERS
@@ -178,9 +157,7 @@ def calcular_matriculables(df_resultado: pd.DataFrame, df_convalidados: pd.DataF
         df_resultado["PUEDE_MATRICULAR"] = False
         return df_resultado, df_resultado[df_resultado["PUEDE_MATRICULAR"]]
 
-    cursos_ok = set(
-        df_convalidados["CURSO"].astype(str).str.upper().str.strip().tolist()
-    )
+    cursos_ok = set(df_convalidados["CURSO"].astype(str).str.upper().str.strip().tolist())
 
     def cumple_req(req):
         if req is None:
@@ -234,7 +211,6 @@ def _encabezado_pdf(c, titulo_principal, alumno, codigo, carrera_upn, campus, lo
     c.setFont("Helvetica", 10)
     y = titulo_y - 22
 
-    # ✅ alumno ya llega como "Apellidos, Nombres"
     c.drawString(40, y, f"Apellidos y Nombres: {str(alumno).upper()}")
     c.drawRightString(width - 40, y, f"Código: {str(codigo).upper()}")
 
@@ -245,21 +221,9 @@ def _encabezado_pdf(c, titulo_principal, alumno, codigo, carrera_upn, campus, lo
 
 
 def _dibujar_tabla_fija_27(c, y: float, df: pd.DataFrame, titulo_columna_curso: str, total_cr: int):
-    estilo = ParagraphStyle(
-        name="TablaUPN",
-        fontName="Helvetica",
-        fontSize=8,
-        leading=11,
-    )
+    estilo = ParagraphStyle(name="TablaUPN", fontName="Helvetica", fontSize=8, leading=11)
 
-    data = [[
-        "Ciclo",
-        titulo_columna_curso,
-        "Materia",
-        "Cód. Curso",
-        "CR"
-    ]]
-
+    data = [["Ciclo", titulo_columna_curso, "Materia", "Cód. Curso", "CR"]]
     MAX_FILAS = 27
 
     for _, row in df.iterrows():
@@ -283,12 +247,7 @@ def _dibujar_tabla_fija_27(c, y: float, df: pd.DataFrame, titulo_columna_curso: 
 
     row_heights = [14] + [16] * MAX_FILAS + [16]
 
-    table = Table(
-        data,
-        colWidths=[15*mm, 95*mm, 30*mm, 25*mm, 15*mm],
-        rowHeights=row_heights,
-        repeatRows=1,
-    )
+    table = Table(data, colWidths=[15 * mm, 95 * mm, 30 * mm, 25 * mm, 15 * mm], rowHeights=row_heights, repeatRows=1)
 
     table.setStyle(
         TableStyle(
@@ -312,8 +271,10 @@ def _dibujar_firmas(c, elaborado_nombre: str, elaborado_cargo: str, resp_nombre:
     c.setFont("Helvetica", 9)
     c.drawString(40, 120, f"Nombre Elaborado por: {str(elaborado_nombre).upper()}")
     c.drawString(40, 108, f"Cargo: {str(elaborado_cargo).upper()}")
-    c.drawString(40, 85,  f"Nombre Resp. Acad.: {str(resp_nombre).upper()}")
-    c.drawString(40, 73,  f"Cargo: {str(resp_cargo).upper()}")
+    c.drawString(40, 85, f"Nombre Resp. Acad.: {str(resp_nombre).upper()}")
+    c.drawString(40, 73, f"Cargo: {str(resp_cargo).upper()}")
+
+
 def _footer_pdf(c, plan_estudios: str, y_referencia: float):
     width, _ = A4
     now = datetime.now()
@@ -329,12 +290,7 @@ def _footer_pdf(c, plan_estudios: str, y_referencia: float):
         "Es potestad del estudiante elegir y matricularse en los cursos que decida."
     )
 
-    estilo_legal = ParagraphStyle(
-        name="LegalFooter",
-        fontName="Helvetica",
-        fontSize=9,
-        leading=11,
-    )
+    estilo_legal = ParagraphStyle(name="LegalFooter", fontName="Helvetica", fontSize=9, leading=11)
 
     p = Paragraph(texto_legal, estilo_legal)
     _, h = p.wrap(width - 80, 100)
@@ -347,6 +303,8 @@ def _footer_pdf(c, plan_estudios: str, y_referencia: float):
     c.setFont("Helvetica", 8)
     c.drawString(40, 25, "UNIVERSIDAD PRIVADA DEL NORTE S.A.C.")
     c.drawRightString(width - 40, 25, "Versión Conva2025G : 7.63")
+
+
 # ============================
 # BLOQUE 3 / 4
 # GENERACIÓN DE PDFs
@@ -367,33 +325,15 @@ def generar_pdf_convalidados(
 ):
     c = canvas.Canvas(ruta_pdf, pagesize=A4)
 
-    total_cr = int(
-        pd.to_numeric(df_convalidados.get("CR", 0), errors="coerce")
-        .fillna(0)
-        .sum()
-    )
+    total_cr = int(pd.to_numeric(df_convalidados.get("CR", 0), errors="coerce").fillna(0).sum())
 
-    y = _encabezado_pdf(
-        c,
-        "RESULTADO DE CONVALIDACIÓN",
-        alumno,
-        codigo,
-        carrera_upn,
-        campus,
-        logo_path,
-    )
+    y = _encabezado_pdf(c, "RESULTADO DE CONVALIDACIÓN", alumno, codigo, carrera_upn, campus, logo_path)
 
     c.setFont("Helvetica-Bold", 10)
     c.drawString(40, y - 10, "Relación de cursos convalidados:")
     y -= 15
 
-    _dibujar_tabla_fija_27(
-        c=c,
-        y=y,
-        df=df_convalidados,
-        titulo_columna_curso="Cursos Convalidados",
-        total_cr=total_cr,
-    )
+    _dibujar_tabla_fija_27(c=c, y=y, df=df_convalidados, titulo_columna_curso="Cursos Convalidados", total_cr=total_cr)
 
     _dibujar_firmas(c, elaborado_nombre, elaborado_cargo, resp_nombre, resp_cargo)
     _footer_pdf(c, plan_estudios, 195)
@@ -418,47 +358,40 @@ def generar_pdf_proyeccion(
 ):
     c = canvas.Canvas(ruta_pdf, pagesize=A4)
 
-    total_cr = int(
-        pd.to_numeric(df_matriculables.get("CR", 0), errors="coerce")
-        .fillna(0)
-        .sum()
-    )
+    total_cr = int(pd.to_numeric(df_matriculables.get("CR", 0), errors="coerce").fillna(0).sum())
 
-    y = _encabezado_pdf(
-        c,
-        "CURSOS RECOMENDADOS PARA EL REGISTRO DE CURSO",
-        alumno,
-        codigo,
-        carrera_upn,
-        campus,
-        logo_path,
-    )
+    y = _encabezado_pdf(c, "CURSOS RECOMENDADOS PARA EL REGISTRO DE CURSO", alumno, codigo, carrera_upn, campus, logo_path)
 
     c.setFont("Helvetica-Bold", 10)
     c.drawString(40, y - 10, "Relación de cursos recomendados para el registro de curso:")
     y -= 15
 
-    _dibujar_tabla_fija_27(
-        c=c,
-        y=y,
-        df=df_matriculables,
-        titulo_columna_curso="Cursos recomendados",
-        total_cr=total_cr,
-    )
+    _dibujar_tabla_fija_27(c=c, y=y, df=df_matriculables, titulo_columna_curso="Cursos recomendados", total_cr=total_cr)
 
     _dibujar_firmas(c, elaborado_nombre, elaborado_cargo, resp_nombre, resp_cargo)
     _footer_pdf(c, plan_estudios, 195)
 
     c.showPage()
     c.save()
+
+
 # ============================
 # BLOQUE 4 / 4
-# UI + REPORTES (MEJORAS SOLICITADAS)
+# UI + REPORTES
 # ============================
 def main(page: ft.Page):
     page.title = "Proyección Malla Curricular UPN"
     page.horizontal_alignment = "center"
     page.scroll = "auto"
+    page.bgcolor = "#F5F7FB"
+    page.theme_mode = ft.ThemeMode.LIGHT
+
+    # =========================
+    # VALORES FIJOS (NO EDITABLES)
+    # =========================
+    PLAN_DEFAULT = "2025G"
+    CARGO_ELAB_DEFAULT = "ASISTENTE"
+    CARGO_RESP_DEFAULT = "COORDINADOR"
 
     # Dataset
     try:
@@ -467,33 +400,57 @@ def main(page: ft.Page):
         page.add(ft.Text(f"Error cargando dataset: {e}", color="red", size=16, weight=ft.FontWeight.BOLD))
         return
 
+    # ✅ listas ya normalizadas
     carreras = sorted(df_base["CARRERA"].dropna().unique().tolist())
 
-    # ✅ Campos (NUEVO: Nombres y Apellidos separados)
+    # Campos
     nombres_field = ft.TextField(label="Nombre(s)", width=300)
     apellidos_field = ft.TextField(label="Apellidos", width=300)
-
     codigo_field = ft.TextField(label="Código de estudiante", width=200)
 
     campus_dd = ft.Dropdown(
         label="Campus / Sede",
-        options=[ft.dropdown.Option(s) for s in ["BREÑA","CAJAMARCA","CHORRILLOS","COMAS","LOS OLIVOS","TRUJILLO","SAN JUAN","ATE","VIRTUAL"]],
+        options=[ft.dropdown.Option(s) for s in ["BREÑA", "CAJAMARCA", "CHORRILLOS", "COMAS", "LOS OLIVOS", "TRUJILLO", "SAN JUAN", "ATE", "VIRTUAL"]],
         width=250,
     )
 
-    # ✅ Plan por defecto
-    plan_field = ft.TextField(label="Plan de estudios", width=200, value="2025G")
+    plan_field = ft.TextField(
+        label="Plan de estudios",
+        width=200,
+        value=PLAN_DEFAULT,
+        read_only=True,
+        prefix_icon=ft.Icons.LOCK,
+        tooltip="Valor fijo (no editable)",
+    )
 
     elaborado_nombre_field = ft.TextField(label="Nombre elaborado por", width=300)
-    elaborado_cargo_field = ft.TextField(label="Cargo elaborado por", width=200, value="ASISTENTE")
+
+    elaborado_cargo_field = ft.TextField(
+        label="Cargo elaborado por",
+        width=200,
+        value=CARGO_ELAB_DEFAULT,
+        read_only=True,
+        prefix_icon=ft.Icons.LOCK,
+        tooltip="Valor fijo (no editable)",
+    )
 
     resp_nombre_field = ft.TextField(label="Nombre Resp. Académico", width=300)
-    resp_cargo_field = ft.TextField(label="Cargo Resp. Académico", width=200, value="COORDINADOR")
+
+    resp_cargo_field = ft.TextField(
+        label="Cargo Resp. Académico",
+        width=200,
+        value=CARGO_RESP_DEFAULT,
+        read_only=True,
+        prefix_icon=ft.Icons.LOCK,
+        tooltip="Valor fijo (no editable)",
+    )
 
     crd_field = ft.TextField(label="CRD (créditos a convalidar)", width=250, keyboard_type=ft.KeyboardType.NUMBER)
 
-    carrera_dd = ft.Dropdown(label="Carrera", options=[ft.dropdown.Option(c) for c in carreras], width=400)
-    unidad_dd = ft.Dropdown(label="Unidad de Negocio", options=[], width=400)
+    carrera_dd = ft.Dropdown(label="Carrera", options=[ft.dropdown.Option(c) for c in carreras], width=520)
+
+    # ✅ importante: unidad inicia deshabilitada hasta cargar opciones
+    unidad_dd = ft.Dropdown(label="Unidad de Negocio", options=[], width=520, disabled=True)
 
     resumen_text = ft.Text("", size=14)
     convalidados_table = ft.Column()
@@ -522,51 +479,75 @@ def main(page: ft.Page):
         )
 
     def tabla_convalidados_ui(df: pd.DataFrame, max_rows=20):
-        columnas = [("CICLO","CICLO"),("CURSO","CURSO"),("MATERIA","MATERIA"),("CÓD. CURSO","CÓD. CURSO"),("CR","CR"),("REQUISITOS","REQUISITOS")]
-        cols = [ft.DataColumn(ft.Text(t)) for t,_ in columnas]
+        columnas = [("CICLO", "CICLO"), ("CURSO", "CURSO"), ("MATERIA", "MATERIA"), ("CÓD. CURSO", "CÓD. CURSO"), ("CR", "CR"), ("REQUISITOS", "REQUISITOS")]
+        cols = [ft.DataColumn(ft.Text(t)) for t, _ in columnas]
         rows = []
         for _, row in df.head(max_rows).iterrows():
-            rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(row.get(col,"")))) for _,col in columnas]))
+            rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(row.get(col, "")))) for _, col in columnas]))
         return ft.DataTable(columns=cols, rows=rows, column_spacing=20, horizontal_margin=10)
 
     def tabla_matriculables_ui(df: pd.DataFrame, max_rows=20):
-        columnas = [("CICLO","CICLO"),("CURSO","CURSO"),("MATERIA","MATERIA"),("CÓD. CURSO","CÓD. CURSO"),("CR","CR")]
-        cols = [ft.DataColumn(ft.Text(t)) for t,_ in columnas]
+        columnas = [("CICLO", "CICLO"), ("CURSO", "CURSO"), ("MATERIA", "MATERIA"), ("CÓD. CURSO", "CÓD. CURSO"), ("CR", "CR")]
+        cols = [ft.DataColumn(ft.Text(t)) for t, _ in columnas]
         rows = []
         for _, row in df.head(max_rows).iterrows():
-            rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(row.get(col,"")))) for _,col in columnas]))
+            rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(row.get(col, "")))) for _, col in columnas]))
         return ft.DataTable(columns=cols, rows=rows, column_spacing=20, horizontal_margin=10)
 
-    def on_carrera_change(e):
-        unidad_dd.options.clear()
+    # ✅ handler robusto (se usa en on_select y on_change)
+    def cargar_unidades_por_carrera():
         unidad_dd.value = None
-        if carrera_dd.value:
-            df_tmp = df_base[df_base["CARRERA"] == carrera_dd.value]
-            unidades = sorted(df_tmp["UNID. NEGOCIO"].dropna().unique())
-            unidad_dd.options = [ft.dropdown.Option(u) for u in unidades]
+        unidad_dd.options = []
+        unidad_dd.disabled = True
+
+        if not carrera_dd.value:
+            page.update()
+            return
+
+        carrera_sel = str(carrera_dd.value).strip().upper()
+
+        df_tmp = df_base[df_base["CARRERA"] == carrera_sel].copy()
+        unidades = sorted([u for u in df_tmp["UNID. NEGOCIO"].dropna().unique().tolist() if str(u).strip() != ""])
+
+        if not unidades:
+            page.snack_bar = ft.SnackBar(
+                ft.Text(f"No se encontraron Unidades para la carrera: {carrera_sel}. Revisa espacios/valores en dataset."),
+                bgcolor=ft.Colors.RED,
+            )
+            page.snack_bar.open = True
+            page.update()
+            return
+
+        unidad_dd.options = [ft.dropdown.Option(u) for u in unidades]
+        unidad_dd.disabled = False
         page.update()
 
-    carrera_dd.on_change = on_carrera_change
+    # ✅ eventos: Dropdown en docs usa on_select :contentReference[oaicite:1]{index=1}
+    def on_carrera_event(e):
+        cargar_unidades_por_carrera()
+
+    carrera_dd.on_select = on_carrera_event   # ✅ principal
+    carrera_dd.on_change = on_carrera_event   # ✅ respaldo
 
     def limpiar_click(e):
-        # ✅ Reset campos
         nombres_field.value = ""
         apellidos_field.value = ""
         codigo_field.value = ""
         campus_dd.value = None
 
-        # ✅ vuelve a default 2025G
-        plan_field.value = "2025G"
-
+        plan_field.value = PLAN_DEFAULT
         elaborado_nombre_field.value = ""
-        elaborado_cargo_field.value = "ASISTENTE"
+        elaborado_cargo_field.value = CARGO_ELAB_DEFAULT
         resp_nombre_field.value = ""
-        resp_cargo_field.value = "COORDINADOR"
+        resp_cargo_field.value = CARGO_RESP_DEFAULT
 
         crd_field.value = ""
         carrera_dd.value = None
-        unidad_dd.options.clear()
+
+        # ✅ reset unidad
         unidad_dd.value = None
+        unidad_dd.options = []
+        unidad_dd.disabled = True
 
         resumen_text.value = ""
         convalidados_table.controls.clear()
@@ -595,7 +576,6 @@ def main(page: ft.Page):
         convalidados_table.controls.clear()
         matriculables_table.controls.clear()
 
-        # ✅ Validación ahora con nombres + apellidos
         if not nombres_field.value or not apellidos_field.value or not codigo_field.value:
             page.snack_bar = ft.SnackBar(ft.Text("Completa Nombre(s), Apellidos y Código"), bgcolor=ft.Colors.RED)
             page.snack_bar.open = True
@@ -622,12 +602,12 @@ def main(page: ft.Page):
             page.update()
             return
 
-        df_conva = df_base[
-            (df_base["CARRERA"] == carrera_dd.value)
-            & (df_base["UNID. NEGOCIO"] == unidad_dd.value)
-        ].copy()
+        carrera_sel = str(carrera_dd.value).strip().upper()
+        unidad_sel = str(unidad_dd.value).strip().upper()
 
-        seleccion, suma_final = seleccionar_convalidacion(df_conva, crd, tolerancia=2)
+        df_conva = df_base[(df_base["CARRERA"] == carrera_sel) & (df_base["UNID. NEGOCIO"] == unidad_sel)].copy()
+
+        seleccion, _ = seleccionar_convalidacion(df_conva, crd, tolerancia=2)
         df_convalidados = df_conva.loc[seleccion].copy()
 
         df_resultado = df_conva.copy()
@@ -638,7 +618,6 @@ def main(page: ft.Page):
 
         crd_int = int(float(crd))
         limite_total = crd_int + 2
-
         suma_real = int(pd.to_numeric(df_convalidados["CR"], errors="coerce").fillna(0).sum())
 
         state.update(
@@ -647,19 +626,15 @@ def main(page: ft.Page):
                 "df_convalidados": df_convalidados,
                 "df_matriculables": df_matriculables,
                 "df_resultado": df_resultado,
-                "carrera": carrera_dd.value,
-                "unidad": unidad_dd.value,
+                "carrera": carrera_sel,
+                "unidad": unidad_sel,
                 "suma_final": suma_real,
                 "crd_int": crd_int,
                 "limite_total": limite_total,
             }
         )
 
-        resumen_text.value = (
-            f"CRD solicitado: {float(crd):.1f} | "
-            f"Convalidados: {suma_real} | "
-            f"Máx permitido (CRD+2): {limite_total}"
-        )
+        resumen_text.value = f"CRD solicitado: {float(crd):.1f} | Convalidados: {suma_real} | Máx permitido (CRD+2): {limite_total}"
 
         if not df_convalidados.empty:
             convalidados_table.controls.append(ft.Text("Cursos convalidados", weight=ft.FontWeight.BOLD))
@@ -682,7 +657,6 @@ def main(page: ft.Page):
         unidad = state["unidad"]
         codigo = codigo_field.value.strip()
 
-        # ✅ Formato requerido: "Apellidos, Nombres"
         alumno_fmt = formatear_apellidos_nombres(apellidos_field.value, nombres_field.value)
 
         nombre_excel = f"Proyeccion_Malla_{carrera}_{unidad}.xlsx"
@@ -709,19 +683,19 @@ def main(page: ft.Page):
                 ],
                 "Valor": [
                     ahora,
-                    alumno_fmt,  # ✅ ya ordenado
+                    alumno_fmt,
                     codigo_field.value,
                     campus_dd.value,
-                    plan_field.value,
+                    PLAN_DEFAULT,
                     crd_field.value,
                     state["limite_total"],
                     state["suma_final"],
-                    carrera_dd.value,
-                    unidad_dd.value,
+                    carrera,
+                    unidad,
                     elaborado_nombre_field.value,
-                    elaborado_cargo_field.value,
+                    CARGO_ELAB_DEFAULT,
                     resp_nombre_field.value,
-                    resp_cargo_field.value,
+                    CARGO_RESP_DEFAULT,
                 ],
             }
         )
@@ -737,30 +711,30 @@ def main(page: ft.Page):
 
         generar_pdf_convalidados(
             os.path.join(OUTPUT_DIR, f"Resultado_Convalidacion_{codigo}.pdf"),
-            alumno_fmt,  # ✅ "Apellidos, Nombres"
+            alumno_fmt,
             codigo,
             carrera_upn,
             campus_dd.value,
-            plan_field.value,
+            PLAN_DEFAULT,
             elaborado_nombre_field.value,
-            elaborado_cargo_field.value,
+            CARGO_ELAB_DEFAULT,
             resp_nombre_field.value,
-            resp_cargo_field.value,
+            CARGO_RESP_DEFAULT,
             state["df_convalidados"],
             logo_path,
         )
 
         generar_pdf_proyeccion(
             os.path.join(OUTPUT_DIR, f"Proyeccion_Malla_{codigo}.pdf"),
-            alumno_fmt,  # ✅ "Apellidos, Nombres"
+            alumno_fmt,
             codigo,
             carrera_upn,
             campus_dd.value,
-            plan_field.value,
+            PLAN_DEFAULT,
             elaborado_nombre_field.value,
-            elaborado_cargo_field.value,
+            CARGO_ELAB_DEFAULT,
             resp_nombre_field.value,
-            resp_cargo_field.value,
+            CARGO_RESP_DEFAULT,
             state["df_matriculables"],
             logo_path,
         )
@@ -783,72 +757,48 @@ def main(page: ft.Page):
         page.snack_bar.open = True
         page.update()
 
-    procesar_btn = ft.ElevatedButton(
-        "Procesar",
-        icon=ft.Icons.CALCULATE,
-        on_click=procesar_click,
-        height=56,
-        width=240,
-        style=btn_style("#2563EB"),
-    )
-
-    generar_btn = ft.ElevatedButton(
-        "Generar Excel/PDF",
-        icon=ft.Icons.PICTURE_AS_PDF,
-        on_click=generar_reportes_click,
-        height=56,
-        width=300,
-        style=btn_style("#16A34A"),
-    )
-
-    copiar_btn = ft.ElevatedButton(
-        "Copiar Matriculables",
-        icon=ft.Icons.COPY,
-        on_click=copiar_tabla_click,
-        height=56,
-        width=300,
-        style=btn_style("#0F766E"),
-    )
-
-    limpiar_btn = ft.ElevatedButton(
-        "Nueva Convalidación",
-        icon=ft.Icons.DELETE_SWEEP,
-        on_click=limpiar_click,
-        height=56,
-        width=300,
-        style=btn_style("#DC2626"),
-    )
+    procesar_btn = ft.ElevatedButton("Procesar", icon=ft.Icons.CALCULATE, on_click=procesar_click, height=56, width=240, style=btn_style("#2563EB"))
+    generar_btn = ft.ElevatedButton("Generar Excel/PDF", icon=ft.Icons.PICTURE_AS_PDF, on_click=generar_reportes_click, height=56, width=300, style=btn_style("#16A34A"))
+    copiar_btn = ft.ElevatedButton("Copiar Matriculables", icon=ft.Icons.COPY, on_click=copiar_tabla_click, height=56, width=300, style=btn_style("#0F766E"))
+    limpiar_btn = ft.ElevatedButton("Nueva Convalidación", icon=ft.Icons.DELETE_SWEEP, on_click=limpiar_click, height=56, width=300, style=btn_style("#DC2626"))
 
     page.add(
         ft.Container(
+            width=980,
+            padding=20,
             content=ft.Column(
-                [
-                    ft.Text("Proyección Malla Curricular UPN", size=20, weight=ft.FontWeight.BOLD),
-                    ft.Text("⚠️ Todos los campos del formulario deben ser llenados antes de procesar.", size=12, color="#FF0000"),
-
-                    # ✅ UI: Nombre(s) + Apellidos separados
-                    ft.Row([nombres_field, apellidos_field, codigo_field]),
-                    ft.Row([campus_dd, plan_field]),
-                    ft.Row([elaborado_nombre_field, elaborado_cargo_field]),
-                    ft.Row([resp_nombre_field, resp_cargo_field]),
-                    ft.Divider(),
-
-                    ft.Row([crd_field]),
-                    ft.Row([carrera_dd]),
-                    ft.Row([unidad_dd]),
-
-                    ft.Row([procesar_btn, generar_btn], spacing=14),
-                    ft.Row([copiar_btn, limpiar_btn], spacing=14),
-
+                spacing=12,
+                controls=[
+                    ft.Text("Proyección Malla Curricular UPN", size=22, weight=ft.FontWeight.BOLD),
+                    ft.Text("⚠️ Todos los campos del formulario deben ser llenados antes de procesar.", size=12, color=ft.Colors.RED),
+                    ft.Card(
+                        elevation=2,
+                        content=ft.Container(
+                            padding=16,
+                            content=ft.Column(
+                                spacing=10,
+                                controls=[
+                                    ft.Row([nombres_field, apellidos_field, codigo_field], wrap=True),
+                                    ft.Row([campus_dd, plan_field], wrap=True),
+                                    ft.Row([elaborado_nombre_field, elaborado_cargo_field], wrap=True),
+                                    ft.Row([resp_nombre_field, resp_cargo_field], wrap=True),
+                                    ft.Divider(),
+                                    ft.Row([crd_field], wrap=True),
+                                    ft.Row([carrera_dd], wrap=True),
+                                    ft.Row([unidad_dd], wrap=True),
+                                ],
+                            ),
+                        ),
+                    ),
+                    ft.Row([procesar_btn, generar_btn], spacing=14, wrap=True),
+                    ft.Row([copiar_btn, limpiar_btn], spacing=14, wrap=True),
                     ft.Divider(),
                     resumen_text,
                     ft.Divider(),
-
                     convalidados_table,
                     ft.Divider(),
                     matriculables_table,
                     ft.Divider(),
-
                     ft.Row(
                         [
                             ft.Icon(ft.Icons.CONTACT_PAGE, size=18, color="#555555"),
@@ -857,11 +807,7 @@ def main(page: ft.Page):
                         alignment=ft.MainAxisAlignment.END,
                     ),
                 ],
-                expand=True,
-                spacing=10,
             ),
-            padding=20,
-            width=950,
         )
     )
 

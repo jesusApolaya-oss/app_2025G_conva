@@ -1,5 +1,5 @@
 # ============================
-# APP BATCH: EXCEL -> PDFs AUTOMÁTICOS (UPN) | SOLO PDF
+# APP BATCH: EXCEL -> PDFs AUTOMÁTICOS (UPN) | PDF + EXCEL RESUMEN
 # ============================
 import flet as ft
 import pandas as pd
@@ -172,7 +172,7 @@ REQUIRED_INPUT_COLS_CANON = [
     "CARRERA",
     "UNIDAD DE NEGOCIO",
     "CRD",
-    # "GRUPO"  # <- NO obligatoria (si falta, se usa SIN_GRUPO)
+    # "GRUPO"  # opcional
 ]
 
 SYNONYMS = {
@@ -186,6 +186,8 @@ SYNONYMS = {
     "UNIDAD DE NEGOCIO": ["UNIDAD DE NEGOCIO", "UNIDAD NEGOCIO", "UNIDAD"],
     "PLAN DE ESTUDIOS": ["PLAN DE ESTUDIOS", "PLAN ESTUDIOS", "PLAN"],
     "GRUPO": ["GRUPO", "GROUP", "COHORTE", "SECCION", "SECCIÓN"],
+    "NOMBRE ELABORADO POR": ["NOMBRE ELABORADO POR", "ELABORADO POR", "NOMBRE ELABORADOR", "ELABORADO"],
+    "NOMBRE RESP ACADEMICO": ["NOMBRE RESP ACADEMICO", "NOMBRE RESP. ACADEMICO", "RESP. ACADEMICO", "RESP ACADEMICO"],
 }
 
 def _canon(s: str) -> str:
@@ -220,11 +222,20 @@ def ensure_required_cols(df: pd.DataFrame):
         )
 
 def get_cell(row, col, default=""):
+    variants = [col] + SYNONYMS.get(col, [])
+    for v in variants:
+        v_c = _canon(v)
+        if v_c in row:
+            val = row.get(v_c, default)
+            if pd.isna(val):
+                return default
+            return str(val).strip()
+    # fallback directo canon
     col_c = _canon(col)
-    v = row.get(col_c, default)
-    if pd.isna(v):
+    val = row.get(col_c, default)
+    if pd.isna(val):
         return default
-    return str(v).strip()
+    return str(val).strip()
 
 
 # =========================================================
@@ -509,10 +520,61 @@ def generar_pdf_proyeccion(
 
 
 # =========================================================
-# UI (Flet) - SOLO CARGA Y PROCESO AUTOMÁTICO
+# ✅ NUEVO: EXPORTAR LIBRO EXCEL FINAL (2 HOJAS)
+# =========================================================
+def exportar_resumen_excel(out_root: str, rows_conva: list, rows_reco: list):
+    xlsx_path = os.path.join(out_root, "RESUMEN_CONVALIDACIONES_Y_RECOMENDADOS.xlsx")
+
+    df_conva = pd.DataFrame(rows_conva)
+    df_reco = pd.DataFrame(rows_reco)
+
+    # Si están vacíos, igual crear con columnas base para que no salga “en blanco”
+    if df_conva.empty:
+        df_conva = pd.DataFrame(columns=[
+            "GRUPO", "COD ESTUDIANTE", "APELLIDO", "NOMBRE", "ALUMNO_FMT", "SEDE",
+            "PLAN DE ESTUDIOS", "CARRERA", "UNIDAD DE NEGOCIO", "CRD",
+            "NOMBRE ELABORADO POR", "CARGO ELABORADO POR", "NOMBRE RESP ACADEMICO", "CARGO RESP ACADEMICO",
+            "CARRERA_UPN",
+            "CICLO", "CURSO", "MATERIA", "CÓD. CURSO", "CR", "REQUISITOS"
+        ])
+
+    if df_reco.empty:
+        df_reco = pd.DataFrame(columns=[
+            "GRUPO", "COD ESTUDIANTE", "APELLIDO", "NOMBRE", "ALUMNO_FMT", "SEDE",
+            "PLAN DE ESTUDIOS", "CARRERA", "UNIDAD DE NEGOCIO", "CRD",
+            "NOMBRE ELABORADO POR", "CARGO ELABORADO POR", "NOMBRE RESP ACADEMICO", "CARGO RESP ACADEMICO",
+            "CARRERA_UPN",
+            "CICLO", "CURSO", "MATERIA", "CÓD. CURSO", "CR", "REQUISITOS"
+        ])
+
+    # Orden sugerido (si existen)
+    base_first = [
+        "GRUPO", "COD ESTUDIANTE", "APELLIDO", "NOMBRE", "ALUMNO_FMT", "SEDE",
+        "PLAN DE ESTUDIOS", "CARRERA", "UNIDAD DE NEGOCIO", "CRD",
+        "NOMBRE ELABORADO POR", "CARGO ELABORADO POR", "NOMBRE RESP ACADEMICO", "CARGO RESP ACADEMICO",
+        "CARRERA_UPN",
+        "CICLO", "CURSO", "MATERIA", "CÓD. CURSO", "CR", "REQUISITOS"
+    ]
+
+    def reorder(df):
+        cols = [c for c in base_first if c in df.columns] + [c for c in df.columns if c not in base_first]
+        return df.loc[:, cols]
+
+    df_conva = reorder(df_conva)
+    df_reco = reorder(df_reco)
+
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        df_conva.to_excel(writer, sheet_name="CONVALIDACIONES", index=False)
+        df_reco.to_excel(writer, sheet_name="RECOMENDADOS", index=False)
+
+    return xlsx_path
+
+
+# =========================================================
+# UI (Flet)
 # =========================================================
 def main(page: ft.Page):
-    page.title = "UPN - Proyección Malla (Proceso Masivo desde Excel) - SOLO PDF"
+    page.title = "UPN - Proyección Malla (Proceso Masivo desde Excel) - PDF + Excel Resumen"
     page.horizontal_alignment = "center"
     page.scroll = "auto"
 
@@ -529,7 +591,7 @@ def main(page: ft.Page):
     df_base_norm["UNID. NEGOCIO"] = df_base_norm["UNID. NEGOCIO"].astype(str).str.strip()
 
     # UI controls
-    status_text = ft.Text("Carga un Excel y el sistema generará PDFs automáticamente.", size=13)
+    status_text = ft.Text("Carga un Excel y el sistema generará PDFs y un Excel resumen automáticamente.", size=13)
     progress = ft.ProgressBar(width=700, value=0)
     log_box = ft.TextField(
         label="Log",
@@ -609,9 +671,12 @@ def main(page: ft.Page):
         ok_count = 0
         err_count = 0
 
-        # ✅ NUEVO: acumuladores de fallos
         failed_codes = []
         failed_details = []  # (codigo, error)
+
+        # ✅ NUEVO: acumuladores globales para el Excel resumen
+        resumen_conva_rows = []
+        resumen_reco_rows = []
 
         for i, row in df_in.iterrows():
             idx = i + 1
@@ -619,7 +684,6 @@ def main(page: ft.Page):
             status_text.value = f"Procesando {idx}/{total}..."
             page.update()
 
-            # Pre-lectura para tener "codigo" disponible también en errores
             codigo_pre = get_cell(row, "COD ESTUDIANTE", default="").strip()
 
             try:
@@ -635,12 +699,9 @@ def main(page: ft.Page):
                 cargo_elab = get_cell(row, "CARGO ELABORADO POR")
                 cargo_resp = get_cell(row, "CARGO RESP ACADEMICO")
 
-                # Si quieres nombres también en el excel, agrega columnas:
-                # "Nombre elaborado por" y "Nombre resp. Académico"
                 nombre_elab = get_cell(row, "NOMBRE ELABORADO POR", default="")
                 nombre_resp = get_cell(row, "NOMBRE RESP ACADEMICO", default="")
 
-                # ✅ NUEVO: Grupo (no obligatorio)
                 grupo_raw = get_cell(row, "GRUPO", default="SIN_GRUPO")
                 grupo = safe_filename(grupo_raw) if grupo_raw else "SIN_GRUPO"
                 if not grupo:
@@ -651,7 +712,7 @@ def main(page: ft.Page):
 
                 alumno_fmt = formatear_apellidos_nombres(apellido, nombre)
 
-                # ✅ NUEVO: estructura por grupo: out_root/grupo/<alumno>/
+                # estructura por grupo: out_root/grupo/<alumno>/
                 out_group = os.path.join(out_root, grupo)
                 os.makedirs(out_group, exist_ok=True)
 
@@ -710,24 +771,71 @@ def main(page: ft.Page):
                     logo_path,
                 )
 
+                # ✅ NUEVO: construir filas para el Excel final (alumno se repite por curso)
+                alumno_base = {
+                    "GRUPO": grupo,
+                    "COD ESTUDIANTE": codigo,
+                    "APELLIDO": apellido,
+                    "NOMBRE": nombre,
+                    "ALUMNO_FMT": alumno_fmt,
+                    "SEDE": sede,
+                    "PLAN DE ESTUDIOS": plan,
+                    "CARRERA": carrera,
+                    "UNIDAD DE NEGOCIO": unidad,
+                    "CRD": crd,
+                    "NOMBRE ELABORADO POR": nombre_elab,
+                    "CARGO ELABORADO POR": cargo_elab,
+                    "NOMBRE RESP ACADEMICO": nombre_resp,
+                    "CARGO RESP ACADEMICO": cargo_resp,
+                    "CARRERA_UPN": carrera_upn,
+                }
+
+                # hoja CONVALIDACIONES
+                for _, r in df_convalidados.iterrows():
+                    resumen_conva_rows.append({
+                        **alumno_base,
+                        "CICLO": r.get("CICLO", ""),
+                        "CURSO": r.get("CURSO", ""),
+                        "MATERIA": r.get("MATERIA", ""),
+                        "CÓD. CURSO": r.get("CÓD. CURSO", ""),
+                        "CR": r.get("CR", ""),
+                        "REQUISITOS": r.get("REQUISITOS", ""),
+                    })
+
+                # hoja RECOMENDADOS
+                for _, r in df_matriculables.iterrows():
+                    resumen_reco_rows.append({
+                        **alumno_base,
+                        "CICLO": r.get("CICLO", ""),
+                        "CURSO": r.get("CURSO", ""),
+                        "MATERIA": r.get("MATERIA", ""),
+                        "CÓD. CURSO": r.get("CÓD. CURSO", ""),
+                        "CR": r.get("CR", ""),
+                        "REQUISITOS": r.get("REQUISITOS", ""),
+                    })
+
                 ok_count += 1
                 log(f"✅ {idx}/{total} OK - {codigo} - {alumno_fmt} | Grupo={grupo}")
 
             except Exception as ex:
                 err_count += 1
-
-                # ✅ NUEVO: guardar códigos fallidos
                 cod_err = codigo_pre or "(SIN_CODIGO)"
                 failed_codes.append(cod_err)
                 failed_details.append((cod_err, str(ex)))
-
                 log(f"❌ {idx}/{total} ERROR - {cod_err} -> {ex}")
 
         progress.value = 1
 
-        # ✅ NUEVO: resumen final de fallos
+        # ✅ NUEVO: generar Excel resumen al final
+        try:
+            xlsx_path = exportar_resumen_excel(out_root, resumen_conva_rows, resumen_reco_rows)
+            log("────────────────────────────────────────────")
+            log(f"📘 Excel resumen generado: {xlsx_path}")
+        except Exception as ex_xlsx:
+            log(f"⚠️ No se pudo generar el Excel resumen: {ex_xlsx}")
+
+        # resumen final de fallos
         if failed_codes:
-            # únicos, en orden
             seen = set()
             failed_unique = []
             for c in failed_codes:
@@ -738,7 +846,6 @@ def main(page: ft.Page):
             log("────────────────────────────────────────────")
             log(f"⚠️ CÓDIGOS FALLIDOS ({len(failed_unique)}): {', '.join(failed_unique)}")
 
-            # archivo txt para copiar rápido
             try:
                 txt_path = os.path.join(out_root, "FALLIDOS.txt")
                 with open(txt_path, "w", encoding="utf-8") as f:
@@ -766,11 +873,11 @@ def main(page: ft.Page):
         )
 
     seleccionar_btn = ft.ElevatedButton(
-        "Cargar Excel y Generar PDFs",
+        "Cargar Excel y Generar PDFs + Excel",
         icon=ft.Icons.UPLOAD_FILE,
         on_click=seleccionar_excel_click,
         height=56,
-        width=340,
+        width=360,
         style=btn_style("#2563EB"),
     )
 
@@ -778,7 +885,7 @@ def main(page: ft.Page):
         ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("UPN - Proyección Malla (Masivo desde Excel) - SOLO PDF", size=20, weight=ft.FontWeight.BOLD),
+                    ft.Text("UPN - Proyección Malla (Masivo desde Excel) - PDF + Excel Resumen", size=20, weight=ft.FontWeight.BOLD),
                     ft.Text(
                         "Excel requerido: Nombre | Apellido | Cod estudiante | Sede | Plan de estudios | "
                         "Cargo elaborado por | Cargo resp. Académico | Carrera | Unidad de negocio | CRD | (Opcional: Grupo)",
