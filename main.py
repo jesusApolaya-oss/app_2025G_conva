@@ -1,3 +1,7 @@
+# =========================================================
+# VOLVER EJECUTABLE EL APP SE REALIZA FLET ya que las pc corporativas no las detecta como virus ya que usa el sistema web
+# =========================================================
+
 import flet as ft
 import pandas as pd
 import re
